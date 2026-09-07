@@ -1,6 +1,14 @@
 // ============================================================================
 // WLEDAuraSync.cpp
 // Versioning:
+//   v1.4 - 2026-09-07 - Fix "Found 0 devices in Aura Sync" (verificato via
+//          la versione Python: WLED/WiFi funzionano correttamente, il
+//          problema era solo lato Aura). Enumerate() chiamato subito dopo
+//          SwitchMode() puo' tornare una collezione vuota perche' il
+//          servizio Aura Sync/Armoury Crate impiega un istante a passare in
+//          modalita' controllo SDK. Aggiunta una breve attesa (Sleep) tra le
+//          due chiamate e un messaggio diagnostico se restano comunque 0
+//          dispositivi.
 //   v1.3 - 2026-09-07 - Passaggio da seriale USB a WiFi (HTTP polling).
 //          Alcune schede (es. D1 mini incollato dentro una lampada con solo
 //          il cavo USB originale, senza i fili dati) non espongono una porta
@@ -164,6 +172,12 @@ int main(int argc, char** argv)
 			try {
 				// Acquire control
 				sdk->SwitchMode();
+				// v1.4 (2026-09-07): Enumerate() chiamato subito dopo SwitchMode()
+				// puo' tornare una collezione vuota perche' il servizio Aura
+				// Sync/Armoury Crate impiega un istante a passare in modalita'
+				// controllo SDK. Piccola attesa per dargli il tempo di popolare
+				// l'elenco dispositivi.
+				Sleep(1000);
 				// Enumerate all devices
 				devices = sdk->Enumerate(0); // 0 means ALL
 			}
@@ -173,6 +187,15 @@ int main(int argc, char** argv)
 				WinHttpCloseHandle(hConnect);
 				WinHttpCloseHandle(hSession);
 				return 1;
+			}
+
+			// v1.4: se non trova nessun dispositivo, il problema e' quasi
+			// sempre il servizio Aura (non attivo, permessi, Aura Sync
+			// disattivato in Armoury Crate), non questo programma.
+			if (devices->Count == 0) {
+				std::cerr << "Nessun dispositivo Aura Sync trovato." << std::endl;
+				std::cerr << "Verifica che Armoury Crate/Aura Sync sia aperto, che l'exe sia eseguito come Amministratore," << std::endl;
+				std::cerr << "e che \"Aura Sync\" sia attivo (interruttore generale + per singolo dispositivo) nelle impostazioni di Armoury Crate." << std::endl;
 			}
 
 #ifdef SHOW_INFO

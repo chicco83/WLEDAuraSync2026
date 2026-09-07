@@ -1,6 +1,15 @@
 # ==============================================================================
 # main.py
 # Versioning:
+#   v1.6 - 2026-09-07 - Fix "Trovati 0 dispositivi Aura Sync".
+#          WLED ora funziona (confermato: dati live ricevuti correttamente,
+#          fps stabili). Il problema restante era lato Aura: Enumerate()
+#          chiamato subito dopo SwitchMode() tornava una collezione vuota.
+#          Aggiunta una breve attesa tra le due chiamate (il servizio Aura
+#          Sync/Armoury Crate impiega un istante a passare in modalita'
+#          controllo SDK) e un messaggio diagnostico se restano comunque 0
+#          dispositivi (servizio non attivo, permessi, Aura Sync disattivato
+#          in Armoury Crate).
 #   v1.5 - 2026-09-07 - Fix output bufferizzato + timeout/diagnostica sul
 #          WebSocket.
 #          1) print() non appariva a schermo (PowerShell) perche' Python
@@ -71,11 +80,20 @@ print("Connesso. In attesa del primo frame live da WLED...")
 
 auraSdk = win32com.client.Dispatch("aura.sdk.1")
 auraSdk.SwitchMode()
+# v1.6 (2026-09-07): Enumerate() chiamato subito dopo SwitchMode() puo'
+# tornare una collezione vuota perche' il servizio Aura Sync/Armoury Crate
+# impiega un istante a passare in modalita' controllo SDK. Piccola attesa
+# per dargli il tempo di popolare l'elenco dispositivi.
+time.sleep(1)
 devices = auraSdk.Enumerate(0)
 
 # v1.4: elenco dispositivi Aura trovati, utile per capire se il servizio
 # Aura Sync/Armoury Crate e' raggiungibile e quante luci vede davvero.
 print("Trovati " + str(devices.Count) + " dispositivi Aura Sync:")
+if devices.Count == 0:
+    print("Nessun dispositivo trovato. Verifica che: Armoury Crate/Aura Sync sia aperto,")
+    print("che lo script sia eseguito come Amministratore, e che 'Aura Sync' sia attivo")
+    print("(interruttore generale + per singolo dispositivo) nelle impostazioni di Armoury Crate.")
 for dev in devices:
     print(" - " + dev.Name + " : " + str(dev.Lights.Count) + " led")
 
