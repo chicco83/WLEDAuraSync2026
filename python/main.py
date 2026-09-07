@@ -1,6 +1,18 @@
 # ==============================================================================
 # main.py
 # Versioning:
+#   v2.3 - 2026-09-07 - Forzata protocol_version=0 nella connessione a
+#          OpenRGBClient. Uno script diagnostico standalone (diagnose_openrgb.py)
+#          che parla il protocollo via socket grezzo ha dimostrato che
+#          l'handshake e la lettura dei dati di tutti i controller funzionano
+#          perfettamente anche con il server sperimentale (SDK v6): quindi
+#          OpenRGBDisconnected non viene dal server che chiude la connessione,
+#          ma da openrgb-python che si disconnette da solo perche' non
+#          interpreta correttamente qualche campo del formato dati dei
+#          controller a protocollo >= 1 (oltre al bug gia' corretto in v2.2).
+#          Forzando protocol_version=0 chiediamo al server il formato dati
+#          piu' semplice/vecchio possibile, che la libreria sa sicuramente
+#          gestire.
 #   v2.2 - 2026-09-07 - Causa esatta trovata per il blocco su OpenRGB "SDK
 #          Version 6" (build sperimentale): bug noto di openrgb-python
 #          <=0.3.6 (desync nel parsing delle zone con server a protocollo
@@ -104,9 +116,17 @@ print("Connesso. In attesa del primo frame live da WLED...")
 # -----------------------------------------------------------------------------
 # v2.0 (2026-09-07): connessione al server SDK di OpenRGB al posto dell'SDK
 # Aura. OpenRGB deve essere gia' avviato con "SDK Server" attivo.
+# v2.3 (2026-09-07): uno script diagnostico a basso livello (senza passare da
+# questa libreria) ha confermato che l'handshake e i dati dei controller
+# arrivano correttamente anche da una build sperimentale con protocollo SDK
+# v6: il problema e' quindi nel parsing di openrgb-python, non nel server.
+# Forziamo la richiesta della versione di protocollo piu' bassa/semplice (0)
+# invece del default della libreria (4), cosi' il server serializza i dati
+# nel formato piu' elementare possibile, aggirando eventuali campi aggiunti
+# nei protocolli v4/v5/v6 che la libreria non gestisce ancora correttamente.
 print("Connessione a OpenRGB su " + openrgb_host + ":" + str(openrgb_port) + "...")
 try:
-    orgb_client = OpenRGBClient(address=openrgb_host, port=openrgb_port, name="WLEDAuraSync")
+    orgb_client = OpenRGBClient(address=openrgb_host, port=openrgb_port, name="WLEDAuraSync", protocol_version=0)
 except Exception as e:
     # v2.1 (2026-09-07): la porta puo' essere raggiungibile (TCP connesso) ma
     # l'handshake del protocollo SDK fallire lo stesso, es. per un
