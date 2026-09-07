@@ -1,6 +1,15 @@
 # ==============================================================================
 # main.py
 # Versioning:
+#   v1.4 - 2026-09-07 - Aggiunti messaggi di stato a console.
+#          Lo script non ha mai stampato nulla (nemmeno nella versione
+#          originale del 2021): un funzionamento corretto e un blocco reale
+#          erano quindi indistinguibili a schermo. Aggiunti messaggi di
+#          connessione, elenco dispositivi Aura trovati e un contatore fps
+#          ogni secondo, sul modello di SHOW_INFO/SHOW_FPS della versione
+#          C++. Se lo script sembra "bloccato" ma non stampa nemmeno "In
+#          attesa del primo frame live da WLED...", il problema e' prima
+#          del loop principale (connessione WebSocket o Aura SDK).
 #   v1.3 - 2026-09-07 - Corretto formato dati del WebSocket live view.
 #          Il commento della v1.2 assumeva che {"lv":true} sul WebSocket
 #          restituisse lo stesso JSON {"leds":[...]} dell'endpoint HTTP
@@ -13,9 +22,8 @@
 #              qualsiasi altro valore per una striscia 1D (header di 2 byte)
 #            - a seguire: 3 byte per pixel, in ordine R, G, B (niente stringhe
 #              esadecimali, niente virgolette JSON)
-#          Aggiornato il parsing di conseguenza (vedi sezione commentata v1.2
-#          qui sotto). L'endpoint HTTP /json/live (usato dalla versione C++)
-#          invece restituisce davvero JSON: non serve cambiare nulla li'.
+#          L'endpoint HTTP /json/live (usato dalla versione C++) invece
+#          restituisce davvero JSON: non serve cambiare nulla li'.
 #   v1.2 - 2026-09-07 - Passaggio da seriale USB a WiFi (WebSocket). Formato
 #          dati assunto erroneamente (vedi v1.3).
 #   v1.1 - 2026-09-07 - Protocollo seriale WLED aggiornato al firmware stock.
@@ -24,6 +32,7 @@
 import win32com.client
 import websocket
 import sys
+import time
 
 
 ###########
@@ -49,13 +58,24 @@ if len(sys.argv) > 1:
 # -----------------------------------------------------------------------------
 # v1.2/v1.3 (2026-09-07): connessione WebSocket al posto della seriale. Con
 # {"lv":true} chiediamo a WLED di iniziare lo streaming live dei pixel.
+print("Connessione a WLED su " + wled_host + " (WebSocket)...")
 wled_ws_url = "ws://" + wled_host + "/ws"
 wled_ws = websocket.create_connection(wled_ws_url, timeout=5)
 wled_ws.send('{"lv":true}')
+print("Connesso. In attesa del primo frame live da WLED...")
 
 auraSdk = win32com.client.Dispatch("aura.sdk.1")
 auraSdk.SwitchMode()
 devices = auraSdk.Enumerate(0)
+
+# v1.4: elenco dispositivi Aura trovati, utile per capire se il servizio
+# Aura Sync/Armoury Crate e' raggiungibile e quante luci vede davvero.
+print("Trovati " + str(devices.Count) + " dispositivi Aura Sync:")
+for dev in devices:
+    print(" - " + dev.Name + " : " + str(dev.Lights.Count) + " led")
+
+frame_count = 0
+t_start = time.time()
 
 while True:
     # --- v1.0/v1.1 (originali, richiesta/risposta via seriale) -------------
@@ -80,7 +100,7 @@ while True:
     frame = wled_ws.recv()
 
     if not isinstance(frame, (bytes, bytearray)) or len(frame) < 3 or frame[0] != 76:  # 76 = 'L'
-        continue  # non e' un frame di live view valido, scartalo
+        continue  # es. il primo messaggio dopo la connessione e' testo/JSON di stato, non live view
 
     header_len = 4 if frame[1] == 2 else 2  # 2D (matrice) vs 1D (striscia)
     pixels = frame[header_len:]
@@ -96,3 +116,12 @@ while True:
             dev.Lights(i).Color = (b << 16) | (g << 8) | r  # Aura sdk expects 0x00BBGGRR
             led_index += 1
         dev.Apply()
+
+    # v1.4: contatore fps a console ogni secondo, per vedere a colpo d'occhio
+    # che il loop sta ricevendo ed applicando dati reali.
+    frame_count += 1
+    now = time.time()
+    if now - t_start >= 1.0:
+        print(str(frame_count) + " fps, " + str(led_response_count) + " led")
+        frame_count = 0
+        t_start = now
