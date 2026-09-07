@@ -1,6 +1,15 @@
 # ==============================================================================
 # main.py
 # Versioning:
+#   v2.5 - 2026-09-07 - Diagnostica su color_mode della modalita' attiva.
+#          Confermato: DRAM e scheda madre erano gia' in modalita' "Direct",
+#          eppure le luci non cambiavano colore. set_colors() si comporta
+#          diversamente a seconda che active_mode.color_mode sia PER_LED
+#          (manda i colori per singolo led, quello che serve) o MODE_SPECIFIC
+#          (imposta un singolo colore per l'intera modalita' invece che per
+#          led): un driver sperimentale potrebbe riportare "Direct" come
+#          MODE_SPECIFIC per errore, il che spiegherebbe il comportamento
+#          osservato. Aggiunta stampa di color_mode per saperlo con certezza.
 #   v2.4 - 2026-09-07 - Diagnostica sulla modalita' dei dispositivi OpenRGB.
 #          Connessione, WLED e fps tutti confermati funzionanti, ma le luci
 #          non seguivano i colori: possibile causa e' che il dispositivo non
@@ -173,6 +182,17 @@ for dev in devices:
     except ValueError:
         print("   ATTENZIONE: nessuna modalita' chiamata 'Direct' su questo dispositivo -")
         print("   set_colors() probabilmente non avra' alcun effetto visibile (vedi elenco sopra)")
+
+    # v2.5 (2026-09-07): la modalita' era gia' "Direct" su DRAM e scheda madre
+    # eppure le luci non cambiavano colore. set_colors() si comporta in modo
+    # diverso a seconda di active_mode.color_mode: se e' PER_LED manda i
+    # colori normalmente (quello che ci serve), se invece e' MODE_SPECIFIC
+    # imposta un singolo "colore della modalita'" invece del colore per ogni
+    # led - un driver sperimentale potrebbe riportare "Direct" come
+    # MODE_SPECIFIC per errore/incompletezza, il che spiegherebbe il
+    # comportamento visto. Stampiamo color_mode per saperlo con certezza.
+    active_mode_obj = dev.modes[dev.active_mode]
+    print("   color_mode della modalita' attiva: " + str(active_mode_obj.color_mode))
 
 frame_count = 0
 t_start = time.time()
