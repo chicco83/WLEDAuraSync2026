@@ -1,6 +1,10 @@
-# v1.2 (2026-09-07): rimosso pyserial (non serve piu', si usa il WiFi invece
-# della porta seriale USB) e aggiunto websocket-client per la live view di
-# WLED via WebSocket. Vedi versioning in main.py.
-# v1.0/v1.1 (originali): pyserial==3.5
-websocket-client==1.8.0
-pywin32==301
+# v1.3 (2026-09-07): pywin32==301 e websocket-client==1.8.0 erano gia'
+# datate (301 e' del 2021: su Python recenti puo' non trovare una wheel
+# compatibile e fallire l'installazione). Aggiornate alle ultime versioni
+# disponibili su PyPI al momento della verifica (pywin32 312,
+# websocket-client 1.9.0).
+# v1.2: websocket-client==1.8.0 (sostituiva pyserial==3.5, non serve piu'
+# la porta seriale USB)
+# v1.0/v1.1 (originali): pyserial==3.5, pywin32==301
+websocket-client==1.9.0
+pywin32==312
