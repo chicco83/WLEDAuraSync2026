@@ -1,6 +1,14 @@
 # ==============================================================================
 # main.py
 # Versioning:
+#   v2.1 - 2026-09-07 - Diagnostica migliorata sulla connessione a OpenRGB.
+#          La porta 6742 puo' risultare raggiungibile (test TCP riuscito) ma
+#          la connessione OpenRGBClient() fallire comunque, con un'eccezione
+#          senza messaggio (es. TimeoutError vuoto durante l'handshake del
+#          protocollo SDK - capita con build di sviluppo/nightly di OpenRGB
+#          che possono usare un protocollo diverso da quello supportato da
+#          openrgb-python). Ora si stampa tipo ed eventuale messaggio
+#          dell'eccezione invece del solo str(e), spesso vuoto.
 #   v2.0 - 2026-09-07 - Sostituito l'SDK Aura con OpenRGB.
 #          Confermato su hardware reale: su schede AM5 con header ARGB "Gen 2"
 #          (es. ROG STRIX B650-A GAMING WIFI) il controller e' gestito via USB
@@ -92,9 +100,17 @@ print("Connesso. In attesa del primo frame live da WLED...")
 print("Connessione a OpenRGB su " + openrgb_host + ":" + str(openrgb_port) + "...")
 try:
     orgb_client = OpenRGBClient(address=openrgb_host, port=openrgb_port, name="WLEDAuraSync")
-except (ConnectionRefusedError, TimeoutError, OSError) as e:
-    print("Impossibile connettersi a OpenRGB: " + str(e))
-    print("Verifica che OpenRGB sia avviato e che in Settings > SDK Server 'Server Enabled' sia attivo.")
+except Exception as e:
+    # v2.1 (2026-09-07): la porta puo' essere raggiungibile (TCP connesso) ma
+    # l'handshake del protocollo SDK fallire lo stesso, es. per un
+    # disallineamento di versione tra questa libreria (openrgb-python) e una
+    # build di sviluppo di OpenRGB che parla un protocollo piu' recente. In
+    # quel caso l'eccezione originale (spesso senza messaggio) non bastava a
+    # capire cosa fosse successo: stampiamo tipo ed eventuale messaggio.
+    print("Impossibile connettersi a OpenRGB: " + type(e).__name__ + (": " + str(e) if str(e) else " (nessun messaggio)"))
+    print("Verifica che OpenRGB sia avviato con il server SDK attivo. Se stai usando una build di")
+    print("sviluppo/nightly, prova la versione stabile: potrebbe usare un protocollo SDK piu' recente")
+    print("di quello supportato da questa libreria (openrgb-python).")
     sys.exit(1)
 
 devices = orgb_client.devices
