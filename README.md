@@ -4,8 +4,8 @@ Controlling Aura Sync devices through WLED
 &nbsp;
 
 ## Description & Guide
-1. The project uses the Aura Sync API [Asus Aura SDK V3.1](https://www.asus.com/microsite/aurareadydevportal/index.html)
-and needs the "lighting service" install, I couldnt really find a standalone installer for it even thought the guide in the sdk link mentions it, it however automatically installs with Armoury Crate so maybe install it then uninstall it keepingt he lighting service"
+1. **Python version**: controls the lights through [OpenRGB](https://openrgb.org/) instead of the Asus Aura SDK. On motherboards with "Gen 2" addressable RGB headers (e.g. AM5 boards like the ROG STRIX B650-A GAMING WIFI), the legacy Aura SDK V3.1 COM interface (`aura.sdk.1`/`AuraServiceLib`) simply never sees any device — `Enumerate()` returns 0 even with Armoury Crate/Aura Creator open and the Lighting Service running — because that header is driven by a newer USB controller the 2019-era SDK was never updated to recognize. Armoury Crate's own newer internal stack supports it, and so does OpenRGB (which ships a dedicated driver for it), so the Python version now talks to OpenRGB's SDK server instead. You need [OpenRGB](https://openrgb.org/) running with its SDK Server enabled (Settings > SDK Server > Server Enabled, default port 6742), and Armoury Crate closed (its `LightingService` must not be running, otherwise it and OpenRGB fight over the same hardware access).
+   **C++ version**: still uses the legacy Aura SDK V3.1 for the lighting side (only the WLED transport was modernized, see point 2) — on the same "Gen 2 header" hardware it will report 0 devices found, same as the Python version did before this change. It hasn't been ported to OpenRGB yet.
 
 2. The client app communicates with WLED over **WiFi** to get live led data, using WLED's built-in live-view feature (the same one used by the preview in WLED's own web UI): `GET /json/live` for the C++ version, `ws://<host>/ws` (`{"lv":true}`) for the Python version. No custom WLED firmware or serial/USB connection is required. Any recent stock WLED build works out of the box — just flash official WLED using the [Compile Guide](https://github.com/Aircoookie/WLED/wiki/Compiling-WLED) or install a stock release, then make sure your PC can reach the device's hostname or IP on the network (set a fixed IP or an mDNS name like `wled-lampada.local` in WLED's WiFi settings).
 
@@ -33,11 +33,13 @@ and needs the "lighting service" install, I couldnt really find a standalone ins
 
 ## Build
 ### Python
-in a venv
+1. install and open [OpenRGB](https://openrgb.org/), enable Settings > SDK Server > Server Enabled, and make sure Armoury Crate is closed (its LightingService must not be running)
+2. in a venv:
 ```
 pip install -r requirements.txt
-python main.py
+python main.py wled-lampada.local
 ```
+first argument is your WLED hostname/IP, optional second argument is OpenRGB's host if it's not running on the same PC (defaults to 127.0.0.1)
 
 ### C++
 1. open in visual studio 2019 and build

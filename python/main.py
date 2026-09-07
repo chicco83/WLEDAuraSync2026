@@ -1,46 +1,38 @@
 # ==============================================================================
 # main.py
 # Versioning:
-#   v1.6 - 2026-09-07 - Fix "Trovati 0 dispositivi Aura Sync".
-#          WLED ora funziona (confermato: dati live ricevuti correttamente,
-#          fps stabili). Il problema restante era lato Aura: Enumerate()
-#          chiamato subito dopo SwitchMode() tornava una collezione vuota.
-#          Aggiunta una breve attesa tra le due chiamate (il servizio Aura
-#          Sync/Armoury Crate impiega un istante a passare in modalita'
-#          controllo SDK) e un messaggio diagnostico se restano comunque 0
-#          dispositivi (servizio non attivo, permessi, Aura Sync disattivato
-#          in Armoury Crate).
+#   v2.0 - 2026-09-07 - Sostituito l'SDK Aura con OpenRGB.
+#          Confermato su hardware reale: su schede AM5 con header ARGB "Gen 2"
+#          (es. ROG STRIX B650-A GAMING WIFI) il controller e' gestito via USB
+#          ("Aura USB Controller") e Armoury Crate lo pilota correttamente,
+#          ma la libreria COM legacy AuraServiceLib/aura.sdk.1 (SDK Aura V3.1,
+#          2019-2020) non e' mai stata aggiornata per riconoscerlo:
+#          Enumerate() tornava sempre 0 dispositivi, sia con Armoury Crate che
+#          con Aura Creator, nonostante il servizio LightingService fosse
+#          regolarmente in esecuzione. OpenRGB invece ha un driver dedicato
+#          per questo controller e lo rileva. Da qui in poi il progetto
+#          controlla le luci tramite il server SDK di OpenRGB (libreria
+#          "openrgb-python") invece che tramite win32com/AuraServiceLib.
+#          Richiede: OpenRGB in esecuzione con "SDK Server" attivo
+#          (Settings > SDK Server > Server Enabled, porta di default 6742) e
+#          Armoury Crate chiuso (LightingService fermo) altrimenti si
+#          contendono l'accesso hardware.
+#   v1.6 - 2026-09-07 - Fix "Trovati 0 dispositivi Aura Sync" (attesa dopo
+#          SwitchMode). Non ha risolto: causa reale scoperta poi in v2.0.
 #   v1.5 - 2026-09-07 - Fix output bufferizzato + timeout/diagnostica sul
-#          WebSocket.
-#          1) print() non appariva a schermo (PowerShell) perche' Python
-#             bufferizza lo stdout quando non riconosce bene il terminale:
-#             il traceback di un KeyboardInterrupt manuale ha mostrato che lo
-#             script era in realta' gia' dentro il loop principale, oltre
-#             tutte le stampe di stato. Forzato l'unbuffering dello stdout.
-#          2) Il vero problema e' che wled_ws.recv() restava bloccato per
-#             sempre: nessun frame live arrivava da WLED. Il timeout passato
-#             a create_connection() non si applicava alle recv() successive
-#             alla connessione iniziale; ora viene impostato esplicitamente
-#             con wled_ws.settimeout(). Se scatta il timeout, ri-mandiamo
-#             {"lv":true} (magari il flag si e' disattivato, es. un altro
-#             client - tipo l'anteprima live nell'interfaccia web di WLED -
-#             ha preso il turno) e stampiamo ogni messaggio non riconosciuto
-#             (tipo/contenuto) cosi' si vede cosa manda davvero WLED invece
-#             di scartarlo in silenzio.
-#   v1.4 - 2026-09-07 - Aggiunti messaggi di stato a console (connessione,
-#          dispositivi Aura trovati, contatore fps).
+#          WebSocket (stdout non appariva, wled_ws.recv() restava bloccato).
+#   v1.4 - 2026-09-07 - Aggiunti messaggi di stato a console.
 #   v1.3 - 2026-09-07 - Corretto formato dati del WebSocket live view: frame
-#          BINARIO ('L' + flag dimensione + terne RGB), non JSON come
-#          assunto nella v1.2. L'endpoint HTTP /json/live (versione C++)
-#          restituisce invece davvero JSON, li' non cambia nulla.
+#          BINARIO ('L' + flag dimensione + terne RGB), non JSON.
 #   v1.2 - 2026-09-07 - Passaggio da seriale USB a WiFi (WebSocket).
 #   v1.1 - 2026-09-07 - Protocollo seriale WLED aggiornato al firmware stock.
 #   v1.0 - baseline originale (Shady Nawara, WLEDAuraSync2021)
 # ==============================================================================
-import win32com.client
 import websocket
 import sys
 import time
+from openrgb import OpenRGBClient
+from openrgb.utils import RGBColor
 
 # v1.5: forza l'output a video subito, invece di restare nel buffer di
 # Python finche' il processo non termina o il buffer non si riempie.
@@ -51,10 +43,14 @@ sys.stdout.reconfigure(line_buffering=True)
 ## User Configurable Section or through command line
 ###########
 wled_host = "wled.local"  # hostname mDNS o IP del dispositivo WLED
+openrgb_host = "127.0.0.1"  # OpenRGB gira sullo stesso PC di questo script, di norma
+openrgb_port = 6742  # porta di default del "SDK Server" di OpenRGB
 RECV_TIMEOUT_SECONDS = 3  # se non arriva nessun frame entro questo tempo, ri-chiediamo la live view
 
 if len(sys.argv) > 1:
     wled_host = str(sys.argv[1])
+    if len(sys.argv) > 2:
+        openrgb_host = str(sys.argv[2])
 #
 ## End of User Configurable Section
 ###########
@@ -78,24 +74,41 @@ wled_ws.settimeout(RECV_TIMEOUT_SECONDS)  # v1.5: garantisce il timeout anche su
 wled_ws.send('{"lv":true}')
 print("Connesso. In attesa del primo frame live da WLED...")
 
-auraSdk = win32com.client.Dispatch("aura.sdk.1")
-auraSdk.SwitchMode()
-# v1.6 (2026-09-07): Enumerate() chiamato subito dopo SwitchMode() puo'
-# tornare una collezione vuota perche' il servizio Aura Sync/Armoury Crate
-# impiega un istante a passare in modalita' controllo SDK. Piccola attesa
-# per dargli il tempo di popolare l'elenco dispositivi.
-time.sleep(1)
-devices = auraSdk.Enumerate(0)
+# --- v1.0-v1.6 (originali/precedenti, controllo luci via SDK Aura) ----------
+# auraSdk = win32com.client.Dispatch("aura.sdk.1")
+# auraSdk.SwitchMode()
+# time.sleep(1)  # v1.6: dava tempo al servizio Aura di popolare l'elenco
+# devices = auraSdk.Enumerate(0)
+# print("Trovati " + str(devices.Count) + " dispositivi Aura Sync:")
+# if devices.Count == 0:
+#     print("Nessun dispositivo trovato. Verifica che: Armoury Crate/Aura Sync sia aperto,")
+#     print("che lo script sia eseguito come Amministratore, e che 'Aura Sync' sia attivo")
+#     print("(interruttore generale + per singolo dispositivo) nelle impostazioni di Armoury Crate.")
+# for dev in devices:
+#     print(" - " + dev.Name + " : " + str(dev.Lights.Count) + " led")
+# -----------------------------------------------------------------------------
+# v2.0 (2026-09-07): connessione al server SDK di OpenRGB al posto dell'SDK
+# Aura. OpenRGB deve essere gia' avviato con "SDK Server" attivo.
+print("Connessione a OpenRGB su " + openrgb_host + ":" + str(openrgb_port) + "...")
+try:
+    orgb_client = OpenRGBClient(address=openrgb_host, port=openrgb_port, name="WLEDAuraSync")
+except (ConnectionRefusedError, TimeoutError, OSError) as e:
+    print("Impossibile connettersi a OpenRGB: " + str(e))
+    print("Verifica che OpenRGB sia avviato e che in Settings > SDK Server 'Server Enabled' sia attivo.")
+    sys.exit(1)
 
-# v1.4: elenco dispositivi Aura trovati, utile per capire se il servizio
-# Aura Sync/Armoury Crate e' raggiungibile e quante luci vede davvero.
-print("Trovati " + str(devices.Count) + " dispositivi Aura Sync:")
-if devices.Count == 0:
-    print("Nessun dispositivo trovato. Verifica che: Armoury Crate/Aura Sync sia aperto,")
-    print("che lo script sia eseguito come Amministratore, e che 'Aura Sync' sia attivo")
-    print("(interruttore generale + per singolo dispositivo) nelle impostazioni di Armoury Crate.")
+devices = orgb_client.devices
+print("Trovati " + str(len(devices)) + " dispositivi OpenRGB:")
+if len(devices) == 0:
+    print("Nessun dispositivo trovato da OpenRGB. Apri OpenRGB e premi 'Detect Devices',")
+    print("e verifica che Armoury Crate sia chiuso (LightingService fermo): i due si contendono")
+    print("l'accesso hardware, se Armoury Crate lo tiene occupato OpenRGB non vede nulla.")
 for dev in devices:
-    print(" - " + dev.Name + " : " + str(dev.Lights.Count) + " led")
+    print(" - " + dev.name + " : " + str(len(dev.leds)) + " led")
+    try:
+        dev.set_mode("Direct")  # serve la modalita' "Direct" per poter impostare i colori via SDK
+    except ValueError:
+        pass  # il dispositivo non ha una modalita' chiamata "Direct": si prova comunque a impostare i colori
 
 frame_count = 0
 t_start = time.time()
@@ -144,16 +157,34 @@ while True:
     pixels = frame[header_len:]
     led_response_count = len(pixels) // 3  # 3 byte (R, G, B) per pixel
 
+    # --- v1.0-v1.6 (originali/precedenti, un colore alla volta via SDK Aura) --
+    # led_index = 0
+    # for dev in devices:
+    #     for i in range(dev.Lights.Count):
+    #         if led_index >= led_response_count:
+    #             break
+    #         offset = led_index * 3
+    #         r, g, b = pixels[offset], pixels[offset + 1], pixels[offset + 2]
+    #         dev.Lights(i).Color = (b << 16) | (g << 8) | r  # Aura sdk expects 0x00BBGGRR
+    #         led_index += 1
+    #     dev.Apply()
+    # -----------------------------------------------------------------------------
+    # v2.0 (2026-09-07): OpenRGB si aggiorna un dispositivo alla volta con
+    # set_colors(), che pero' richiede sempre una lista lunga esattamente
+    # quanto i led del dispositivo (a differenza dell'SDK Aura, non si puo'
+    # aggiornarne solo una parte): i led oltre i dati ricevuti da WLED
+    # vengono spenti (nero) invece di lasciarli con il colore precedente.
     led_index = 0
     for dev in devices:
-        for i in range(dev.Lights.Count):
-            if led_index >= led_response_count:
-                break
-            offset = led_index * 3
-            r, g, b = pixels[offset], pixels[offset + 1], pixels[offset + 2]
-            dev.Lights(i).Color = (b << 16) | (g << 8) | r  # Aura sdk expects 0x00BBGGRR
-            led_index += 1
-        dev.Apply()
+        colors = []
+        for i in range(len(dev.leds)):
+            if led_index < led_response_count:
+                offset = led_index * 3
+                colors.append(RGBColor(pixels[offset], pixels[offset + 1], pixels[offset + 2]))
+                led_index += 1
+            else:
+                colors.append(RGBColor(0, 0, 0))
+        dev.set_colors(colors, fast=True)
 
     # v1.4: contatore fps a console ogni secondo, per vedere a colpo d'occhio
     # che il loop sta ricevendo ed applicando dati reali.
