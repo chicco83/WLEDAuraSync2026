@@ -1,31 +1,30 @@
 # ==============================================================================
 # main.py
 # Versioning:
-#   v1.4 - 2026-09-07 - Aggiunti messaggi di stato a console.
-#          Lo script non ha mai stampato nulla (nemmeno nella versione
-#          originale del 2021): un funzionamento corretto e un blocco reale
-#          erano quindi indistinguibili a schermo. Aggiunti messaggi di
-#          connessione, elenco dispositivi Aura trovati e un contatore fps
-#          ogni secondo, sul modello di SHOW_INFO/SHOW_FPS della versione
-#          C++. Se lo script sembra "bloccato" ma non stampa nemmeno "In
-#          attesa del primo frame live da WLED...", il problema e' prima
-#          del loop principale (connessione WebSocket o Aura SDK).
-#   v1.3 - 2026-09-07 - Corretto formato dati del WebSocket live view.
-#          Il commento della v1.2 assumeva che {"lv":true} sul WebSocket
-#          restituisse lo stesso JSON {"leds":[...]} dell'endpoint HTTP
-#          /json/live: sbagliato. Verificato nel sorgente ufficiale di WLED
-#          (wled00/data/liveview.htm, il codice usato dall'anteprima live
-#          nell'interfaccia web) che il WebSocket manda invece un frame
-#          BINARIO per ogni update:
-#            - byte 0: 'L' (76) - firma del pacchetto, altrimenti da scartare
-#            - byte 1: 2 se e' una matrice 2D (header di 4 byte totali),
-#              qualsiasi altro valore per una striscia 1D (header di 2 byte)
-#            - a seguire: 3 byte per pixel, in ordine R, G, B (niente stringhe
-#              esadecimali, niente virgolette JSON)
-#          L'endpoint HTTP /json/live (usato dalla versione C++) invece
-#          restituisce davvero JSON: non serve cambiare nulla li'.
-#   v1.2 - 2026-09-07 - Passaggio da seriale USB a WiFi (WebSocket). Formato
-#          dati assunto erroneamente (vedi v1.3).
+#   v1.5 - 2026-09-07 - Fix output bufferizzato + timeout/diagnostica sul
+#          WebSocket.
+#          1) print() non appariva a schermo (PowerShell) perche' Python
+#             bufferizza lo stdout quando non riconosce bene il terminale:
+#             il traceback di un KeyboardInterrupt manuale ha mostrato che lo
+#             script era in realta' gia' dentro il loop principale, oltre
+#             tutte le stampe di stato. Forzato l'unbuffering dello stdout.
+#          2) Il vero problema e' che wled_ws.recv() restava bloccato per
+#             sempre: nessun frame live arrivava da WLED. Il timeout passato
+#             a create_connection() non si applicava alle recv() successive
+#             alla connessione iniziale; ora viene impostato esplicitamente
+#             con wled_ws.settimeout(). Se scatta il timeout, ri-mandiamo
+#             {"lv":true} (magari il flag si e' disattivato, es. un altro
+#             client - tipo l'anteprima live nell'interfaccia web di WLED -
+#             ha preso il turno) e stampiamo ogni messaggio non riconosciuto
+#             (tipo/contenuto) cosi' si vede cosa manda davvero WLED invece
+#             di scartarlo in silenzio.
+#   v1.4 - 2026-09-07 - Aggiunti messaggi di stato a console (connessione,
+#          dispositivi Aura trovati, contatore fps).
+#   v1.3 - 2026-09-07 - Corretto formato dati del WebSocket live view: frame
+#          BINARIO ('L' + flag dimensione + terne RGB), non JSON come
+#          assunto nella v1.2. L'endpoint HTTP /json/live (versione C++)
+#          restituisce invece davvero JSON, li' non cambia nulla.
+#   v1.2 - 2026-09-07 - Passaggio da seriale USB a WiFi (WebSocket).
 #   v1.1 - 2026-09-07 - Protocollo seriale WLED aggiornato al firmware stock.
 #   v1.0 - baseline originale (Shady Nawara, WLEDAuraSync2021)
 # ==============================================================================
@@ -34,11 +33,16 @@ import websocket
 import sys
 import time
 
+# v1.5: forza l'output a video subito, invece di restare nel buffer di
+# Python finche' il processo non termina o il buffer non si riempie.
+sys.stdout.reconfigure(line_buffering=True)
+
 
 ###########
 ## User Configurable Section or through command line
 ###########
 wled_host = "wled.local"  # hostname mDNS o IP del dispositivo WLED
+RECV_TIMEOUT_SECONDS = 3  # se non arriva nessun frame entro questo tempo, ri-chiediamo la live view
 
 if len(sys.argv) > 1:
     wled_host = str(sys.argv[1])
@@ -61,6 +65,7 @@ if len(sys.argv) > 1:
 print("Connessione a WLED su " + wled_host + " (WebSocket)...")
 wled_ws_url = "ws://" + wled_host + "/ws"
 wled_ws = websocket.create_connection(wled_ws_url, timeout=5)
+wled_ws.settimeout(RECV_TIMEOUT_SECONDS)  # v1.5: garantisce il timeout anche sulle recv() successive
 wled_ws.send('{"lv":true}')
 print("Connesso. In attesa del primo frame live da WLED...")
 
@@ -76,6 +81,7 @@ for dev in devices:
 
 frame_count = 0
 t_start = time.time()
+unexpected_messages_logged = 0  # v1.5: limita quanti messaggi "strani" stampiamo, per non intasare la console
 
 while True:
     # --- v1.0/v1.1 (originali, richiesta/risposta via seriale) -------------
@@ -97,10 +103,24 @@ while True:
     # -----------------------------------------------------------------------------
     # v1.3 (2026-09-07): il WebSocket manda un frame binario (vedi versioning
     # sopra), non JSON. websocket-client ritorna bytes per i frame binari.
-    frame = wled_ws.recv()
+    # v1.5: try/except per non restare bloccati in eterno se WLED smette di
+    # mandare la live view.
+    try:
+        frame = wled_ws.recv()
+    except (websocket.WebSocketTimeoutException, TimeoutError):
+        print("Nessun frame ricevuto da " + str(RECV_TIMEOUT_SECONDS) + "s, richiedo di nuovo la live view...")
+        wled_ws.send('{"lv":true}')
+        continue
 
     if not isinstance(frame, (bytes, bytearray)) or len(frame) < 3 or frame[0] != 76:  # 76 = 'L'
-        continue  # es. il primo messaggio dopo la connessione e' testo/JSON di stato, non live view
+        # v1.5: stampiamo cosa arriva davvero (limitato alle prime volte) invece
+        # di scartarlo in silenzio - aiuta a capire se WLED risponde con un
+        # errore testuale invece della live view binaria attesa.
+        if unexpected_messages_logged < 5:
+            preview = frame if isinstance(frame, str) else repr(frame[:32])
+            print("Messaggio inatteso (non e' un frame live view): " + str(preview))
+            unexpected_messages_logged += 1
+        continue
 
     header_len = 4 if frame[1] == 2 else 2  # 2D (matrice) vs 1D (striscia)
     pixels = frame[header_len:]
