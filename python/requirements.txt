@@ -1,8 +1,15 @@
-# v2.0 (2026-09-07): rimosso pywin32 (non serve piu': niente win32com/SDK
-# Aura, sostituito da OpenRGB - vedi versioning in main.py). Aggiunto
-# openrgb-python per parlare con il server SDK di OpenRGB.
+# v2.2 (2026-09-07): openrgb-python==0.3.6 (l'ultima release su PyPI, ottobre
+# 2025) ha un bug di desync nel parsing delle zone con server a protocollo
+# SDK >= 5: il server manda un blocco "matrix map" per ogni zona (non solo
+# per quelle di tipo matrice), ma la libreria lo leggeva solo per le zone
+# MATRIX, restando sfasata di 8 byte sulle zone LINEAR/SINGLE (tipiche degli
+# header ARGB) e leggendo dati spazzatura da li' in poi -> connessione che si
+# blocca in timeout con build OpenRGB sperimentali/1.0rc3+ (SDK Version 6).
+# Corretto nel commit f2eb04b (PR jath03/openrgb-python#93, 19 agosto 2026),
+# non ancora pubblicato su PyPI: installiamo direttamente da GitHub.
+# v2.0: openrgb-python==0.3.6, rimosso pywin32 (sostituito da OpenRGB)
 # v1.3: pywin32==312, websocket-client==1.9.0
 # v1.2: websocket-client==1.8.0 (sostituiva pyserial==3.5)
 # v1.0/v1.1 (originali): pyserial==3.5, pywin32==301
 websocket-client==1.9.0
-openrgb-python==0.3.6
+git+https://github.com/jath03/openrgb-python.git@f2eb04b

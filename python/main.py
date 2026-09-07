@@ -1,6 +1,13 @@
 # ==============================================================================
 # main.py
 # Versioning:
+#   v2.2 - 2026-09-07 - Causa esatta trovata per il blocco su OpenRGB "SDK
+#          Version 6" (build sperimentale): bug noto di openrgb-python
+#          <=0.3.6 (desync nel parsing delle zone con server a protocollo
+#          SDK >= 5, vedi requirements.txt), corretto su GitHub ma non
+#          ancora rilasciato su PyPI. Nessuna modifica di codice qui: basta
+#          installare openrgb-python dal commit con il fix (vedi
+#          requirements.txt) invece che dalla release PyPI.
 #   v2.1 - 2026-09-07 - Diagnostica migliorata sulla connessione a OpenRGB.
 #          La porta 6742 puo' risultare raggiungibile (test TCP riuscito) ma
 #          la connessione OpenRGBClient() fallire comunque, con un'eccezione
