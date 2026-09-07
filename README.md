@@ -1,14 +1,5 @@
-# WLEDAuraSync
+# WLEDAuraSync 2026 edition
 Controlling Aura Sync devices through WLED
-
-&nbsp;
-
-## Back Story
-
-I recently 3D printed the wall lights shown in the video and wanted to sync it to my desktop RGB since they are close to each other on my desk.
-I tried diyHUE with the Armoury Crate app since it can sync with a hue bridge, but it only supports 'static' and 'color cycle' modes and it didnt even work since philips changed their api and the good folks at diyHUE are still working on it (great project btw)
-I then tried OpenRGB which would have made it possible with some kind of MQTT proxy but unfortunetly it didn't support my specific Crucial Ballistix DRAM
-I then moved to installing WLED on the wall lights and started this project to control my desktop lights with WLED as well so I can take advantage of te integrations with home asssitant, the amazing WLED effects, realtime sync and so on...
 
 &nbsp;
 
@@ -16,8 +7,7 @@ I then moved to installing WLED on the wall lights and started this project to c
 1. The project uses the Aura Sync API [Asus Aura SDK V3.1](https://www.asus.com/microsite/aurareadydevportal/index.html)
 and needs the "lighting service" install, I couldnt really find a standalone installer for it even thought the guide in the sdk link mentions it, it however automatically installs with Armoury Crate so maybe install it then uninstall it keepingt he lighting service"
 
-2. The client app communicates with an esp8266 (Wemos D1 mini) through serial to get led data from WLED and requires a custom WLED version that adds this serial output capabilities available at [WLED with Serial Out](https://github.com/ShadyNawara/WLED) (Pull Request Pending)
-which can be compiled and flashed using the WLED guide [Compile Guide](https://github.com/Aircoookie/WLED/wiki/Compiling-WLED) or if you are using the Wemos D1 mini, I have my compiled binary in releases
+2. The client app communicates with an esp8266 (Wemos D1 mini) through serial to get led data from WLED 
 
 3. when running the app you should see a window similar to this (window hidden when starting from startup folder or with nowindow arg)
 
