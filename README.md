@@ -16,8 +16,7 @@ I then moved to installing WLED on the wall lights and started this project to c
 1. The project uses the Aura Sync API [Asus Aura SDK V3.1](https://www.asus.com/microsite/aurareadydevportal/index.html)
 and needs the "lighting service" install, I couldnt really find a standalone installer for it even thought the guide in the sdk link mentions it, it however automatically installs with Armoury Crate so maybe install it then uninstall it keepingt he lighting service"
 
-2. The client app communicates with an esp8266 (Wemos D1 mini) through serial to get led data from WLED and requires a custom WLED version that adds this serial output capabilities available at [WLED with Serial Out](https://github.com/ShadyNawara/WLED) (Pull Request Pending)
-which can be compiled and flashed using the WLED guide [Compile Guide](https://github.com/Aircoookie/WLED/wiki/Compiling-WLED) or if you are using the Wemos D1 mini, I have my compiled binary in releases
+2. The client app communicates with an esp8266 (Wemos D1 mini) through serial to get led data from WLED. A custom WLED firmware used to be required for this (see the old [WLED with Serial Out](https://github.com/ShadyNawara/WLED) fork, pull request pending back in 2021), but this is **no longer needed**: since [WLED PR #2156 "Added JSON API over serial support"](https://github.com/wled/WLED/commit/54f4658dae711ef092f935a37d231264d09033eb) any recent stock WLED build already replies to the `l` serial command with the live pixel data (as a plain JSON array of packed colors), which is the format this app now parses. Just flash official WLED using the [Compile Guide](https://github.com/Aircoookie/WLED/wiki/Compiling-WLED) or install a stock release.
 
 3. when running the app you should see a window similar to this (window hidden when starting from startup folder or with nowindow arg)
 

@@ -1,6 +1,15 @@
 // ============================================================================
 // WLEDAuraSync.cpp
 // Versioning:
+//   v1.2 - 2026-09-07 - Protocollo seriale WLED aggiornato al firmware stock.
+//          Il firmware WLED custom del fork ShadyNawara/WLED (menzionato nel
+//          README) non serve piu': dal PR ufficiale #2156 "Added JSON API
+//          over serial support" (2021), qualsiasi build recente di WLED
+//          risponde al comando 'l' con un array JSON di interi decimali
+//          "[16711680,65280,...]" (un colore per pixel, formato
+//          0xWWRRGGBB), non piu' con l'oggetto {"leds":["RRGGBB",...]} del
+//          vecchio firmware custom. Aggiornato il parsing per il nuovo
+//          formato (vedi sezioni commentate "v1.1 e precedenti").
 //   v1.1 - 2026-09-07 - Fix crash immediato all'avvio.
 //          Causa: wled_serial.open() e le chiamate all'SDK Aura Sync 3.1
 //          (SwitchMode/Enumerate) sollevano eccezioni C++ (serial::IOException
@@ -172,17 +181,33 @@ int main(int argc, char** argv)
 			while (1) {
 				wled_serial.write("l"); // request led data
 				json_string = wled_serial.readline(); // read response
-				if (json_string.length() < 5 || json_string[0] != '{' || json_string[json_string.length() - 3] != '}') { // check if receivied valid json
+
+				// --- v1.1 e precedenti (risposta firmware custom, tipo {"leds":[...]}"}") ---
+				// if (json_string.length() < 5 || json_string[0] != '{' || json_string[json_string.length() - 3] != '}') { // check if receivied valid json
+				// 	continue;
+				// }
+				// -----------------------------------------------------------------------------
+				// v1.2 (2026-09-07): il firmware WLED stock risponde con un array JSON
+				// "[...]" (non un oggetto "{...}"), quindi verifichiamo la presenza di
+				// '[' iniziale e di una ']' di chiusura invece delle graffe.
+				if (json_string.length() < 3 || json_string[0] != '[' || json_string.find(']') == std::string::npos) { // check if received a valid json array
 					continue;
 				}
 
 				if (reader->parse(json_string.c_str(), json_string.c_str() + json_string.length(), &json_value, &json_err)) {
 
-					if (!json_value.isMember("leds")) {
+					// --- v1.1 e precedenti (formato firmware custom, chiave "leds") -----
+					// if (!json_value.isMember("leds")) {
+					// 	continue;
+					// }
+					// json_value = json_value["leds"];
+					// -----------------------------------------------------------------------
+					// v1.2 (2026-09-07): con il firmware WLED stock la risposta e' gia'
+					// l'array dei colori dei pixel, non serve piu' entrare nella chiave "leds".
+					if (!json_value.isArray()) {
 						continue;
 					}
 
-					json_value = json_value["leds"];
 					int led_result_size = json_value.size();
 
 					if (led_result_size < 1) {
@@ -208,9 +233,21 @@ int main(int argc, char** argv)
 							if (led_index >= json_value.size()) {
 								break;
 							}
-							std::string color_value = json_value[led_index].asString();
-							std::string bgr_value = "0x00" + color_value.substr(4, 2) + color_value.substr(2, 2) + color_value.substr(0, 2); // Aura sdk expects 0x00BBGGRR instead of the supplied RRGGBB
-							unsigned long ubgr_value = (unsigned long)strtol(bgr_value.c_str(), NULL, 16);
+							// --- v1.1 e precedenti (colore come stringa esadecimale "RRGGBB") ---
+							// std::string color_value = json_value[led_index].asString();
+							// std::string bgr_value = "0x00" + color_value.substr(4, 2) + color_value.substr(2, 2) + color_value.substr(0, 2); // Aura sdk expects 0x00BBGGRR instead of the supplied RRGGBB
+							// unsigned long ubgr_value = (unsigned long)strtol(bgr_value.c_str(), NULL, 16);
+							// -----------------------------------------------------------------------------
+							// v1.2 (2026-09-07): il firmware WLED stock manda il colore del pixel
+							// come intero (strip.getPixelColor(i), formato 0xWWRRGGBB di
+							// NeoPixelBus). Estraiamo R,G,B (il canale W viene ignorato, l'SDK
+							// Aura qui non lo gestisce) e li ricomponiamo nel formato 0x00BBGGRR
+							// atteso dall'SDK Aura.
+							unsigned int packed_color = json_value[led_index].asUInt();
+							unsigned long r = (packed_color >> 16) & 0xFF;
+							unsigned long g = (packed_color >> 8) & 0xFF;
+							unsigned long b = packed_color & 0xFF;
+							unsigned long ubgr_value = (b << 16) | (g << 8) | r;
 
  							if (previous_led_values[led_index] != ubgr_value || first_run) {
 								AuraServiceLib::IAuraRgbLightPtr light = lights->Item[j];
