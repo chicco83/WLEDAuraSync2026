@@ -22,27 +22,14 @@
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
+  <!-- v1.3 (2026-09-07): rimossi i filtri per serial\*.h e serial.lib, non piu'
+       referenziati dal progetto (comunicazione con WLED via HTTP/WinHTTP). -->
   <ItemGroup>
-    <ClInclude Include="serial\impl\unix.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="serial\impl\win.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="serial\serial.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="serial\v8stdint.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="json\json.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="json\json-forwards.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-  </ItemGroup>
-  <ItemGroup>
-    <Library Include="serial.lib" />
   </ItemGroup>
 </Project>
