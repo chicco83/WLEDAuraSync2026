@@ -16,7 +16,7 @@ I then moved to installing WLED on the wall lights and started this project to c
 1. The project uses the Aura Sync API [Asus Aura SDK V3.1](https://www.asus.com/microsite/aurareadydevportal/index.html)
 and needs the "lighting service" install, I couldnt really find a standalone installer for it even thought the guide in the sdk link mentions it, it however automatically installs with Armoury Crate so maybe install it then uninstall it keepingt he lighting service"
 
-2. The client app communicates with an esp8266 (Wemos D1 mini) through serial to get led data from WLED. A custom WLED firmware used to be required for this (see the old [WLED with Serial Out](https://github.com/ShadyNawara/WLED) fork, pull request pending back in 2021), but this is **no longer needed**: since [WLED PR #2156 "Added JSON API over serial support"](https://github.com/wled/WLED/commit/54f4658dae711ef092f935a37d231264d09033eb) any recent stock WLED build already replies to the `l` serial command with the live pixel data (as a plain JSON array of packed colors), which is the format this app now parses. Just flash official WLED using the [Compile Guide](https://github.com/Aircoookie/WLED/wiki/Compiling-WLED) or install a stock release.
+2. The client app communicates with WLED over **WiFi** to get live led data, using WLED's built-in live-view feature (the same one used by the preview in WLED's own web UI): `GET /json/live` for the C++ version, `ws://<host>/ws` (`{"lv":true}`) for the Python version. No custom WLED firmware or serial/USB connection is required (a custom firmware fork used to be needed back in 2021 for a serial-only setup; it no longer is). Any recent stock WLED build works out of the box — just flash official WLED using the [Compile Guide](https://github.com/Aircoookie/WLED/wiki/Compiling-WLED) or install a stock release, then make sure your PC can reach the device's hostname or IP on the network (set a fixed IP or an mDNS name like `wled-lampada.local` in WLED's WiFi settings).
 
 3. when running the app you should see a window similar to this (window hidden when starting from startup folder or with nowindow arg)
 
@@ -32,9 +32,9 @@ and needs the "lighting service" install, I couldnt really find a standalone ins
 
 6. After WLED is configured you can move the .exe file to your startup folder to run on desktop start (win + r then "shell:startup"), p.s. windows defender marked the exe I compiled as trojan which seems like a false positive. feel free to compile your own version
 
-7. The exe runs with 3 optional command line arguments like this ".\WLEDAuraSync.exe COM3 115200 nowindow"
+7. The exe runs with 3 optional command line arguments like this ".\WLEDAuraSync.exe wled-lampada.local 0 nowindow" (hostname or IP of your WLED device, a minimum delay in ms between HTTP requests - 0 for none, and the optional nowindow flag). The Python version only takes the hostname/IP as first argument, e.g. `python main.py wled-lampada.local`.
 
-8. The default baud rate is 115200 which gave me about 47 fps or pixel updates per second. you can compile your own firmware (or use the release for Wemos D1 mini) by changing the baud rate to 921600 in [Wled.cpp #L263 Serial.begin](https://github.com/Aircoookie/WLED/blob/1d4487b6cd7c9a69bbce45c14ae1fb1c622e1d0e/wled00/wled.cpp#L263). the 921600 baud rate gave me constant 70 fps and thats what I am running myself but I will not be adding this to my pull request for WLED
+8. Resolving a `.local` mDNS hostname requires Windows to support mDNS on your network (this usually works out of the box, but if it doesn't, use the device's IP address directly - find it in the WLED app or your router). Expect a somewhat lower and more variable fps over WiFi than the old serial connection did (network latency depends on your router/WiFi), which is still plenty smooth for ambient lighting.
 
 9. There is both a c++ and a python version available in the folders cpp and python respectively. I created the python version first but wanted to see if the Aura SDK was faster in c++, both languages gave the exact same fps. (I will probably maintain the c++ version more)
 

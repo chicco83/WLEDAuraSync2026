@@ -145,9 +145,13 @@
     <ClCompile Include="jsoncpp.cpp" />
     <ClCompile Include="WLEDAuraSync.cpp" />
   </ItemGroup>
+  <!-- v1.3 (2026-09-07): rimossi i riferimenti a serial\*.h e serial.lib (wjwwood/serial).
+       WLEDAuraSync.cpp ora comunica con WLED via HTTP (WinHTTP, incluso in Windows,
+       linkata con #pragma comment nel .cpp) invece che via porta seriale USB - vedi
+       versioning in WLEDAuraSync.cpp. I file della libreria seriale restano su disco
+       per chi volesse tornare alla versione seriale. -->
+  <!-- v1.0 (originale):
   <ItemGroup>
-    <ClInclude Include="json\json-forwards.h" />
-    <ClInclude Include="json\json.h" />
     <ClInclude Include="serial\impl\unix.h" />
     <ClInclude Include="serial\impl\win.h" />
     <ClInclude Include="serial\serial.h" />
@@ -157,6 +161,11 @@
     <Library Include="serial.lib">
       <DeploymentContent>true</DeploymentContent>
     </Library>
+  </ItemGroup>
+  -->
+  <ItemGroup>
+    <ClInclude Include="json\json-forwards.h" />
+    <ClInclude Include="json\json.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

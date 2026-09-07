@@ -1,31 +1,42 @@
 // ============================================================================
 // WLEDAuraSync.cpp
 // Versioning:
-//   v1.2 - 2026-09-07 - Protocollo seriale WLED aggiornato al firmware stock.
-//          Il firmware WLED custom del fork ShadyNawara/WLED (menzionato nel
-//          README) non serve piu': dal PR ufficiale #2156 "Added JSON API
-//          over serial support" (2021), qualsiasi build recente di WLED
-//          risponde al comando 'l' con un array JSON di interi decimali
-//          "[16711680,65280,...]" (un colore per pixel, formato
-//          0xWWRRGGBB), non piu' con l'oggetto {"leds":["RRGGBB",...]} del
-//          vecchio firmware custom. Aggiornato il parsing per il nuovo
-//          formato (vedi sezioni commentate "v1.1 e precedenti").
-//   v1.1 - 2026-09-07 - Fix crash immediato all'avvio.
-//          Causa: wled_serial.open() e le chiamate all'SDK Aura Sync 3.1
-//          (SwitchMode/Enumerate) sollevano eccezioni C++ (serial::IOException
-//          / _com_error) quando la porta COM di default non esiste o il
-//          servizio Aura Sync/Armoury Crate non e' raggiungibile. Prima non
-//          venivano intercettate -> std::terminate() -> crash immediato
-//          dell'eseguibile senza nessun messaggio. Ora vengono gestite con
-//          try/catch e viene stampato un messaggio diagnostico chiaro prima
-//          di uscire in modo controllato (vedi sezioni commentate "v1.0").
+//   v1.3 - 2026-09-07 - Passaggio da seriale USB a WiFi (HTTP polling).
+//          Alcune schede (es. D1 mini incollato dentro una lampada con solo
+//          il cavo USB originale, senza i fili dati) non espongono una porta
+//          seriale utilizzabile dal PC. WLED pero' espone via rete lo stesso
+//          tipo di dati usato dall'anteprima "live view" dell'interfaccia
+//          web, all'endpoint HTTP GET /json/live, nello stesso formato
+//          {"leds": ["RRGGBB", ...]} gia' gestito da questo file prima
+//          dell'introduzione (v1.2) del formato seriale stock (vedi sezioni
+//          commentate sotto). Non serve piu' nessun firmware custom ne' la
+//          seriale: la connessione usa WinHTTP (gia' incluso in Windows,
+//          nessuna nuova libreria esterna). Il primo argomento non e' piu'
+//          la porta COM ma l'hostname mDNS (es. "wled-lampada.local") o
+//          l'IP del dispositivo WLED; il secondo argomento non e' piu' il
+//          baud rate ma un intervallo minimo tra due richieste HTTP in
+//          millisecondi (0 = nessuna attesa aggiuntiva).
+//          NB: la libreria "serial" (wjwwood/serial) non e' piu' referenziata
+//          da questo progetto: rimossa da WLEDAuraSync.vcxproj (i file restano
+//          su disco per chi volesse tornare alla versione seriale).
+//   v1.2 - 2026-09-07 - Protocollo seriale WLED aggiornato al formato stock
+//          (array di interi invece di {"leds":[...]}"). Superato dal
+//          passaggio a WiFi.
+//   v1.1 - 2026-09-07 - Fix crash immediato all'avvio per eccezioni non
+//          gestite sull'apertura della seriale e sull'SDK Aura.
 //   v1.0 - baseline originale (Shady Nawara, WLEDAuraSync2021)
 // ============================================================================
 #import "libid:F1AA5209-5217-4B82-BA7E-A68198999AFA"
-#include "serial/serial.h"
-#include <iostream>
-#include "json/json.h"
+#include <Windows.h>
+#include <winhttp.h>
 #include <comdef.h> // necessario per intercettare le eccezioni _com_error dell'SDK Aura
+#include <iostream>
+#include <string>
+#include <vector>
+#include <stdexcept>
+#include "json/json.h"
+
+#pragma comment(lib, "winhttp.lib")
 
 //#define SHOW_FPS
 #define SHOW_INFO
@@ -36,14 +47,39 @@
 #endif
 
 
-serial::Serial wled_serial;
-
-void cleanup()
+// v1.3: richiede /json/live a WLED via HTTP e ritorna il corpo della risposta.
+// Lancia std::runtime_error se la richiesta fallisce (host irraggiungibile,
+// WLED spento, rete assente, ecc). Chi chiama decide se ritentare.
+static std::string fetchLiveLeds(HINTERNET hConnect)
 {
-	if (wled_serial.isOpen()) {
-		wled_serial.close();
+	HINTERNET hRequest = WinHttpOpenRequest(hConnect, L"GET", L"/json/live", NULL, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, 0);
+	if (!hRequest) {
+		throw std::runtime_error("WinHttpOpenRequest fallita");
 	}
-	::CoUninitialize();
+
+	std::string body;
+	BOOL ok = WinHttpSendRequest(hRequest, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0);
+	if (ok) {
+		ok = WinHttpReceiveResponse(hRequest, NULL);
+	}
+	if (ok) {
+		DWORD available = 0;
+		while (WinHttpQueryDataAvailable(hRequest, &available) && available > 0) {
+			std::string chunk(available, '\0');
+			DWORD bytesRead = 0;
+			if (!WinHttpReadData(hRequest, &chunk[0], available, &bytesRead)) {
+				break;
+			}
+			chunk.resize(bytesRead);
+			body += chunk;
+		}
+	}
+	WinHttpCloseHandle(hRequest);
+
+	if (!ok) {
+		throw std::runtime_error("richiesta HTTP a /json/live fallita (host irraggiungibile o WLED non risponde)");
+	}
+	return body;
 }
 
 int main(int argc, char** argv)
@@ -51,16 +87,21 @@ int main(int argc, char** argv)
 	//////////
 	// User Configurable Section or through command line
 	//////////
-	std::string WLEDCOMPORT = "COM5";
-	int WLEDBAUDRATE = 115200;
+	std::string WLEDHOST = "wled.local"; // hostname mDNS o IP del dispositivo WLED
+	int POLL_INTERVAL_MS = 0; // attesa minima tra due richieste HTTP, 0 = nessuna
 	//
 	//// End of User Configurable Section
 	///////////
 
+	// --- v1.0/v1.1/v1.2 (originali, porta COM + baud rate seriale) -------------
+	// std::string WLEDCOMPORT = "COM5";
+	// int WLEDBAUDRATE = 115200;
+	// -----------------------------------------------------------------------------
+
 	if (argc > 1) {
-		WLEDCOMPORT = std::string(argv[1]);
+		WLEDHOST = std::string(argv[1]);
 		if (argc > 2) {
-			WLEDBAUDRATE = std::stoi(argv[2]);
+			POLL_INTERVAL_MS = std::stoi(argv[2]);
 		}
 		if (argc > 3 && std::string(argv[3]) == "nowindow") {
 			HWND consoleWindow = GetConsoleWindow(); // hide console window
@@ -68,8 +109,7 @@ int main(int argc, char** argv)
 		}
 	}
 
-	wled_serial.setPort(WLEDCOMPORT);
-	wled_serial.setBaudrate(WLEDBAUDRATE);
+	std::wstring wideHost(WLEDHOST.begin(), WLEDHOST.end()); // WinHTTP vuole stringhe wide
 
 	Json::CharReaderBuilder builder;
 	const std::unique_ptr<Json::CharReader> reader(builder.newCharReader());
@@ -83,43 +123,32 @@ int main(int argc, char** argv)
 	hr = ::CoInitializeEx(nullptr, COINIT_MULTITHREADED);
 	if (SUCCEEDED(hr))
 	{
-		// --- v1.0 (originale, causava crash immediato) ---------------------
-		// wled_serial.open(); // open serial
-		// if (wled_serial.isOpen()) {
-		// #ifdef SHOW_INFO
-		// 	std::cout << "Connected to WLED" << std::endl;
-		// #endif
+		// --- v1.0/v1.1 (originali, apertura porta seriale) --------------------
+		// try {
+		// 	wled_serial.open(); // open serial
 		// }
-		// else {
-		// 	return 1;
-		// }
-		// ---------------------------------------------------------------------
-		// v1.1 (2026-09-07): serial::Serial::open() non ritorna un errore,
-		// lancia un'eccezione (serial::IOException) se la porta COM indicata
-		// (o quella di default se l'exe viene avviato senza argomenti) non
-		// esiste, e' gia' in uso o il dispositivo non e' collegato. Senza
-		// try/catch questa eccezione non gestita terminava subito il
-		// programma: da fuori sembrava che "l'exe non si avviasse".
-		try {
-			wled_serial.open(); // open serial
-		}
-		catch (const std::exception& e) {
-			std::cerr << "Errore apertura porta seriale " << WLEDCOMPORT << ": " << e.what() << std::endl;
-			std::cerr << "Verifica che il dispositivo WLED sia collegato e che la porta COM passata come primo argomento sia corretta (es. WLEDAuraSync.exe COM3 115200)." << std::endl;
+		// catch (const std::exception& e) { ... }
+		// if (wled_serial.isOpen()) { ... } else { return 1; }
+		// -----------------------------------------------------------------------
+		// v1.3 (2026-09-07): al posto della seriale, apriamo una sessione HTTP
+		// verso l'host/IP di WLED con WinHTTP.
+		HINTERNET hSession = WinHttpOpen(L"WLEDAuraSync/1.3", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+		HINTERNET hConnect = hSession ? WinHttpConnect(hSession, wideHost.c_str(), INTERNET_DEFAULT_HTTP_PORT, 0) : NULL;
+
+		if (!hSession || !hConnect) {
+			std::cerr << "Impossibile connettersi a " << WLEDHOST << " via HTTP." << std::endl;
+			std::cerr << "Verifica che l'hostname/IP sia corretto e che il dispositivo WLED sia raggiungibile in rete (es. \"WLEDAuraSync.exe wled-lampada.local\")." << std::endl;
+			if (hSession) WinHttpCloseHandle(hSession);
+			::CoUninitialize();
 			return 1;
 		}
 
-		if (wled_serial.isOpen()) {
 #ifdef SHOW_INFO
-			std::cout << "Connected to WLED" << std::endl;
+		std::cout << "Connesso a WLED su " << WLEDHOST << std::endl;
 #endif
-		}
-		else {
-			return 1;
-		}
 
 		// uninitialize on exit
-		const int exit_callback = std::atexit(cleanup);
+		const int exit_callback = std::atexit([]() { ::CoUninitialize(); });
 
 		// Create SDK instance
 		AuraServiceLib::IAuraSdkPtr sdk = nullptr;
@@ -128,18 +157,10 @@ int main(int argc, char** argv)
 		{
 			AuraServiceLib::IAuraSyncDeviceCollectionPtr devices;
 
-			// --- v1.0 (originale, causava crash immediato) ---------------
-			// sdk->SwitchMode();
-			// devices = sdk->Enumerate(0); // 0 means ALL
-			// -----------------------------------------------------------------
-			// v1.1 (2026-09-07): IAuraSdkPtr e' uno smart pointer COM (_com_ptr_t)
-			// che per default lancia un'eccezione _com_error se la chiamata
-			// fallisce (es. servizio Aura Sync/Armoury Crate non in esecuzione,
-			// o la "Lighting Service" non e' attiva). Anche qui l'eccezione
-			// non gestita causava il crash immediato dell'exe. La SDK Aura
-			// usata resta la V3.1 (e' tuttora l'ultima disponibile sul sito
-			// Asus), il problema non era la versione dell'SDK ma la gestione
-			// mancante degli errori quando il servizio non e' raggiungibile.
+			// v1.1/v1.3: IAuraSdkPtr e' uno smart pointer COM (_com_ptr_t) che
+			// lancia _com_error se la chiamata fallisce (es. servizio Aura
+			// Sync/Armoury Crate non in esecuzione). La SDK Aura usata resta
+			// la V3.1 (tuttora l'ultima disponibile sul sito Asus).
 			try {
 				// Acquire control
 				sdk->SwitchMode();
@@ -149,6 +170,8 @@ int main(int argc, char** argv)
 			catch (const _com_error& e) {
 				std::cerr << "Errore comunicazione con Aura Sync SDK 3.1: " << (const char*)e.ErrorMessage() << " (HRESULT 0x" << std::hex << e.Error() << ")" << std::endl;
 				std::cerr << "Verifica che il servizio Aura Sync / Armoury Crate sia installato e in esecuzione (Lighting Service attivo)." << std::endl;
+				WinHttpCloseHandle(hConnect);
+				WinHttpCloseHandle(hSession);
 				return 1;
 			}
 
@@ -179,36 +202,37 @@ int main(int argc, char** argv)
 
 
 			while (1) {
-				wled_serial.write("l"); // request led data
-				json_string = wled_serial.readline(); // read response
+				// --- v1.0/v1.1 (originali, richiesta/risposta via seriale) --------
+				// wled_serial.write("l"); // request led data
+				// json_string = wled_serial.readline(); // read response
+				// --- v1.2 (formato stock, array di interi via seriale) ------------
+				// (vedi versione precedente di questo file per il parsing intero)
+				// -----------------------------------------------------------------------
+				// v1.3 (2026-09-07): richiesta HTTP a /json/live al posto della
+				// seriale. Risposta identica al vecchio formato {"leds":[...]}.
+				try {
+					json_string = fetchLiveLeds(hConnect);
+				}
+				catch (const std::exception& e) {
+					std::cerr << "Errore richiesta a WLED: " << e.what() << std::endl;
+					if (POLL_INTERVAL_MS > 0) {
+						Sleep(POLL_INTERVAL_MS);
+					}
+					continue;
+				}
 
-				// --- v1.1 e precedenti (risposta firmware custom, tipo {"leds":[...]}"}") ---
-				// if (json_string.length() < 5 || json_string[0] != '{' || json_string[json_string.length() - 3] != '}') { // check if receivied valid json
-				// 	continue;
-				// }
-				// -----------------------------------------------------------------------------
-				// v1.2 (2026-09-07): il firmware WLED stock risponde con un array JSON
-				// "[...]" (non un oggetto "{...}"), quindi verifichiamo la presenza di
-				// '[' iniziale e di una ']' di chiusura invece delle graffe.
-				if (json_string.length() < 3 || json_string[0] != '[' || json_string.find(']') == std::string::npos) { // check if received a valid json array
+				if (json_string.length() < 5 || json_string[0] != '{' || json_string.find('}') == std::string::npos) { // check if receivied valid json
 					continue;
 				}
 
 				if (reader->parse(json_string.c_str(), json_string.c_str() + json_string.length(), &json_value, &json_err)) {
 
-					// --- v1.1 e precedenti (formato firmware custom, chiave "leds") -----
-					// if (!json_value.isMember("leds")) {
-					// 	continue;
-					// }
-					// json_value = json_value["leds"];
-					// -----------------------------------------------------------------------
-					// v1.2 (2026-09-07): con il firmware WLED stock la risposta e' gia'
-					// l'array dei colori dei pixel, non serve piu' entrare nella chiave "leds".
-					if (!json_value.isArray()) {
+					if (!json_value.isMember("leds")) {
 						continue;
 					}
 
-					int led_result_size = json_value.size();
+					Json::Value leds = json_value["leds"];
+					int led_result_size = leds.size();
 
 					if (led_result_size < 1) {
 						continue;
@@ -230,26 +254,14 @@ int main(int argc, char** argv)
 
 						for (int j = 0; j < lights->Count; j++)
 						{
-							if (led_index >= json_value.size()) {
+							if (led_index >= leds.size()) {
 								break;
 							}
-							// --- v1.1 e precedenti (colore come stringa esadecimale "RRGGBB") ---
-							// std::string color_value = json_value[led_index].asString();
-							// std::string bgr_value = "0x00" + color_value.substr(4, 2) + color_value.substr(2, 2) + color_value.substr(0, 2); // Aura sdk expects 0x00BBGGRR instead of the supplied RRGGBB
-							// unsigned long ubgr_value = (unsigned long)strtol(bgr_value.c_str(), NULL, 16);
-							// -----------------------------------------------------------------------------
-							// v1.2 (2026-09-07): il firmware WLED stock manda il colore del pixel
-							// come intero (strip.getPixelColor(i), formato 0xWWRRGGBB di
-							// NeoPixelBus). Estraiamo R,G,B (il canale W viene ignorato, l'SDK
-							// Aura qui non lo gestisce) e li ricomponiamo nel formato 0x00BBGGRR
-							// atteso dall'SDK Aura.
-							unsigned int packed_color = json_value[led_index].asUInt();
-							unsigned long r = (packed_color >> 16) & 0xFF;
-							unsigned long g = (packed_color >> 8) & 0xFF;
-							unsigned long b = packed_color & 0xFF;
-							unsigned long ubgr_value = (b << 16) | (g << 8) | r;
+							std::string color_value = leds[led_index].asString(); // "RRGGBB"
+							std::string bgr_value = "0x00" + color_value.substr(4, 2) + color_value.substr(2, 2) + color_value.substr(0, 2); // Aura sdk expects 0x00BBGGRR instead of the supplied RRGGBB
+							unsigned long ubgr_value = (unsigned long)strtol(bgr_value.c_str(), NULL, 16);
 
- 							if (previous_led_values[led_index] != ubgr_value || first_run) {
+							if (previous_led_values[led_index] != ubgr_value || first_run) {
 								AuraServiceLib::IAuraRgbLightPtr light = lights->Item[j];
 								light->Color = ubgr_value;
 								previous_led_values[led_index] = ubgr_value;
@@ -276,20 +288,24 @@ int main(int argc, char** argv)
 				if (first_run) {
 					first_run = false;
 				}
+				if (POLL_INTERVAL_MS > 0) {
+					Sleep(POLL_INTERVAL_MS);
+				}
 			}
 
 		}
-		// v1.1 (2026-09-07): prima non c'era nessun "else" qui: se
-		// sdk.CreateInstance() falliva (Aura Sync/Armoury Crate non
-		// installato o servizio non registrato) l'exe restava aperto senza
-		// fare nulla e senza nessun messaggio, dando l'impressione di un
-		// eseguibile "morto". Ora viene stampato l'errore e il programma
-		// esce subito.
+		// v1.1: se sdk.CreateInstance() fallisce (Aura Sync/Armoury Crate non
+		// installato o servizio non registrato) stampiamo l'errore ed usciamo,
+		// invece di lasciare l'exe aperto senza fare nulla.
 		else {
 			std::cerr << "Impossibile inizializzare l'Aura SDK 3.1 (HRESULT 0x" << std::hex << hr << ")." << std::endl;
 			std::cerr << "Verifica che Aura Sync / Armoury Crate sia installato con la Lighting Service attiva." << std::endl;
+			WinHttpCloseHandle(hConnect);
+			WinHttpCloseHandle(hSession);
 			return 1;
 		}
+		WinHttpCloseHandle(hConnect);
+		WinHttpCloseHandle(hSession);
 	}// Uninitialize COM
 	::CoUninitialize();
 

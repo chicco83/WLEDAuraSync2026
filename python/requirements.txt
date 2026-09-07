@@ -1,2 +1,6 @@
-pyserial==3.5
+# v1.2 (2026-09-07): rimosso pyserial (non serve piu', si usa il WiFi invece
+# della porta seriale USB) e aggiunto websocket-client per la live view di
+# WLED via WebSocket. Vedi versioning in main.py.
+# v1.0/v1.1 (originali): pyserial==3.5
+websocket-client==1.8.0
 pywin32==301
