@@ -1,6 +1,15 @@
 # ==============================================================================
 # main.py
 # Versioning:
+#   v2.4 - 2026-09-07 - Diagnostica sulla modalita' dei dispositivi OpenRGB.
+#          Connessione, WLED e fps tutti confermati funzionanti, ma le luci
+#          non seguivano i colori: possibile causa e' che il dispositivo non
+#          abbia una modalita' chiamata "Direct" (necessaria perche'
+#          set_colors() abbia effetto), es. perche' il driver sperimentale
+#          del nuovo controller usa un altro nome o non la implementa ancora.
+#          Ora si stampano modalita' attuale, elenco delle disponibili, ed
+#          esito del cambio a "Direct" per ogni dispositivo, invece di
+#          ignorare l'errore in silenzio.
 #   v2.3 - 2026-09-07 - Forzata protocol_version=0 nella connessione a
 #          OpenRGBClient. Uno script diagnostico standalone (diagnose_openrgb.py)
 #          che parla il protocollo via socket grezzo ha dimostrato che
@@ -148,10 +157,22 @@ if len(devices) == 0:
     print("l'accesso hardware, se Armoury Crate lo tiene occupato OpenRGB non vede nulla.")
 for dev in devices:
     print(" - " + dev.name + " : " + str(len(dev.leds)) + " led")
+    # v2.4 (2026-09-07): i dati arrivavano da WLED e la connessione a OpenRGB
+    # funzionava, ma le luci non si muovevano: sospetto e' che il dispositivo
+    # non abbia una modalita' chiamata esattamente "Direct" (il driver
+    # sperimentale di un controller nuovo potrebbe usare un altro nome, o
+    # nessuna modalita' di controllo diretto). Ora stampiamo la modalita'
+    # attuale, l'elenco di quelle disponibili, e se il cambio a "Direct" e'
+    # riuscito o no, invece di ignorare l'errore in silenzio.
+    mode_names = [m.name for m in dev.modes]
+    current_mode_name = dev.modes[dev.active_mode].name if dev.active_mode is not None and dev.active_mode >= 0 else "?"
+    print("   modalita' attuale: " + current_mode_name + " | disponibili: " + str(mode_names))
     try:
-        dev.set_mode("Direct")  # serve la modalita' "Direct" per poter impostare i colori via SDK
+        dev.set_mode("Direct")
+        print("   modalita' impostata su 'Direct' con successo")
     except ValueError:
-        pass  # il dispositivo non ha una modalita' chiamata "Direct": si prova comunque a impostare i colori
+        print("   ATTENZIONE: nessuna modalita' chiamata 'Direct' su questo dispositivo -")
+        print("   set_colors() probabilmente non avra' alcun effetto visibile (vedi elenco sopra)")
 
 frame_count = 0
 t_start = time.time()
